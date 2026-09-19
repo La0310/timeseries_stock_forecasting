@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+# pyrefly: ignore [missing-import]
 from fastapi.staticfiles import StaticFiles
 
 from backend.api.forecast_router import router as forecast_router
