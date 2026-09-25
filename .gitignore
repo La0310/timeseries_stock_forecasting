@@ -31,3 +31,14 @@ build/
 # ─── Misc ───
 *.log
 .env
+
+# ─── SQLite databases (runtime state — never commit) ───
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Kaggle / raw M5 data (large, not redistributable) ───
+stock-management/backend/data/m5_kaggle/
+
+# ─── One-off calibration scripts ───
+scripts/calibrate_thresholds.py

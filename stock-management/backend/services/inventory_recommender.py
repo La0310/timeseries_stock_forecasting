@@ -20,7 +20,16 @@ SERVICE_LEVEL_Z: dict[str, float] = {
     "MRO / Parts": 2.33,       # 99% — long lead time; stockout can stall buyer's ops
     "Seasonal overlay": 1.28,  # 90% — overstock/markdown risk exceeds stockout risk
 }
-DEFAULT_Z = 1.65  # any Category absent from the mapping → 95% baseline (no error)
+DEFAULT_Z = 1.65
+
+LOW_THRESHOLD_BY_CATEGORY: dict[str, float] = {
+    "Beverage":         1.2,   # calibrated from M5: high-frequency, low stockout risk
+    "Hardware":         1.2,
+    "MRO / Parts":      1.2,
+    "Office":           1.2,
+    "Seasonal overlay": 1.2,
+}
+DEFAULT_LOW_THRESHOLD = 1.5   # fallback for categories not in the map
 
 
 class InventoryRecommender:
@@ -30,19 +39,28 @@ class InventoryRecommender:
         return SERVICE_LEVEL_Z.get(category, DEFAULT_Z)
 
     @staticmethod
-    def classify_status(inventory_position: float, reorder_point: float) -> str:
+    def classify_status(
+        inventory_position: float,
+        reorder_point: float,
+        category: str = "",
+    ) -> str:
         """
         Single-basis status rule (spec §2.4 / 01 §3 Status badge):
-          Critical : IP ≤ ROP
-          Low      : ROP < IP ≤ 1.5×ROP
-          Healthy  : IP > 1.5×ROP
+          Critical : IP <= ROP
+          Low      : ROP < IP <= low_thresh * ROP
+          Healthy  : IP > low_thresh * ROP
+
+        `low_thresh` is looked up from LOW_THRESHOLD_BY_CATEGORY (calibrated
+        from M5 catalog data). Falls back to DEFAULT_LOW_THRESHOLD (1.5) for
+        unknown categories.
 
         This function is the sole source of 'status' and 'new_status' across
-        Screens 1, 2, and 3.  Frontend never recomputes or infers status.
+        Screens 1, 2, and 3. Frontend never recomputes or infers status.
         """
+        low_thresh = LOW_THRESHOLD_BY_CATEGORY.get(category, DEFAULT_LOW_THRESHOLD)
         if inventory_position <= reorder_point:
             return "Critical"
-        if inventory_position <= 1.5 * reorder_point:
+        if inventory_position <= low_thresh * reorder_point:
             return "Low"
         return "Healthy"
 
@@ -113,6 +131,6 @@ class InventoryRecommender:
             "recommended_cases": cases_needed,
             "recommended_order": recommended_order,
             "status": InventoryRecommender.classify_status(
-                inventory_position, reorder_point
+                inventory_position, reorder_point, category
             ),
         }

@@ -11,9 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from backend.db.database import get_db
 from backend.services.demand_classifier import DemandClassifier
 from backend.services.forecast_engine import ForecastEngine
 from backend.services.inventory_recommender import InventoryRecommender
@@ -77,7 +79,7 @@ class ForecastRequest(BaseModel):
 
 
 @router.post("/api/forecast")
-def post_forecast(req: ForecastRequest) -> dict:
+def post_forecast(req: ForecastRequest, db: Session = Depends(get_db)) -> dict:
     """
     Runs the full demand → routing → forecast → replenishment pipeline.
 
@@ -121,14 +123,15 @@ def post_forecast(req: ForecastRequest) -> dict:
     all_null = all(w is None for w in wape_dict.values())
     limited_history: bool = len(history) < 14 or all_null
 
-    # 5. On-order stock from the in-memory ledger
-    on_order_stock = PurchaseOrderService.get_on_order_stock(sku_id)
+    # 5. On-order stock from the DB ledger
+    on_order_stock = PurchaseOrderService.get_on_order_stock(db, sku_id)
 
     # 6. Quantile forecast
     #    If selected_model is None (all-null scores), _model_point_forecast
     #    falls through to the moving-average baseline (model=None path).
     quantiles = ForecastEngine.generate_quantiles(
-        history, selected_model, horizon_days, daily_sales_std
+        history, selected_model, horizon_days, daily_sales_std,
+        db=db, sku_id=sku_id,
     )
     p50 = quantiles["P50"]  # daily_forecast passed to InventoryRecommender
 
