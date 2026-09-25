@@ -1,70 +1,151 @@
-# AI Demand Forecasting & Dynamic Model Routing
+# 📦 AI Inventory Management & Demand Forecasting System
 
-> **Predictive stock management system** — diagnoses SKU-level demand patterns, runs walk-forward backtest tournaments across 6 ML models, generates probabilistic forecasts, and manages the full purchase order lifecycle.
+> An end-to-end intelligent stock management system that automatically diagnoses product demand patterns, benchmarks multiple forecasting models, and generates data-driven replenishment recommendations — with a full purchase order lifecycle backed by SQLite.
 
----
-
-## ✨ Features
-
-- **Demand Classification** — Auto ADI / CV² diagnosis (Smooth, Erratic, Intermittent, Lumpy)
-- **Dynamic Model Routing** — Walk-forward backtest ranks SBA, TSB, ETS, SARIMAX, LightGBM, Chronos-2 by WAPE; best model selected per SKU with explainability + tie-break rule
-- **Probabilistic Forecasts** — P10 / P50 / P90 quantile forecasts over 28-day horizon
-- **Smart Replenishment** — Safety stock, Reorder Point, case-pack rounding per category
-- **Purchase Order Lifecycle** — Create / Partial Receive / Full Receive / Cancel, persisted in SQLite, race-free PO IDs
-- **What-If Scenarios** — Lead time, demand spike, and order quantity simulators
+**Live demo:** clone + run in 5 minutes → see [Quick Start](#-quick-start)
 
 ---
 
-## 🏗️ Project Structure
+## 🎯 What Problem This Solves
+
+Most inventory systems force planners to manually pick a forecasting method and tune reorder points by gut feel. This leads to:
+- **Stockouts** on fast-moving items → lost sales
+- **Overstock** on slow/intermittent items → tied-up cash
+- **Wrong model choice** — a method that works for steady beverage sales is wrong for lumpy spare-parts demand
+
+This system **automates that decision**: it classifies each product's demand pattern, runs a live backtest tournament across 6 forecasting models, and selects the winner per SKU — with full explainability.
+
+---
+
+## ✨ Key Features
+
+### 🧠 Intelligent Model Selection
+- Classifies each SKU's demand into **Smooth / Erratic / Intermittent / Lumpy** using ADI & CV² metrics (Syntetos-Boylan framework)
+- Runs **walk-forward backtesting** on 6 models simultaneously
+- Selects the best model by WAPE score, with a **tie-break rule** (simpler model preferred when scores are within 5%)
+- Returns a plain-English **explanation** of why that model was chosen
+
+### 📈 Probabilistic Forecasting
+- Generates **28-day forecasts** with P10 / P50 / P90 confidence bands
+- Not just a point estimate — planners see optimistic, expected, and pessimistic scenarios
+
+### 📊 Smart Replenishment
+- Computes **Safety Stock** (95% service level, Z=1.65)
+- Computes **Reorder Point** = forecast × lead time + safety stock
+- Rounds recommended order quantity to the nearest **case pack size**
+- Status calibrated **per category** (Beverage, Office, Hardware, MRO)
+
+### 📦 Purchase Order Lifecycle
+- Full **Create → Partial Receive → Full Receive → Cancel** state machine
+- POs persisted in **SQLite** with race-free ID generation (AUTOINCREMENT + post-flush formatting)
+- `on_order_stock` is always a **live SQL aggregate** — never a stale cached value
+
+### 🔬 What-If Scenario Simulator
+- Adjust lead time, demand multiplier, or order quantity
+- See instantly how inventory position and reorder point change
+
+---
+
+## 🤖 The 6 Forecasting Models
+
+| Model | Type | Best for |
+|---|---|---|
+| **SBA** (Syntetos-Boylan Approximation) | Statistical formula | Intermittent demand |
+| **TSB** (Teunter-Syntetos-Babai) | Exponential smoothing | Intermittent + obsolescence risk |
+| **ETS** (Holt-Winters) | Statistical | Smooth demand with trend/seasonality |
+| **SARIMAX** | Statistical | Seasonal patterns, AIC-selected order |
+| **LightGBM** | Machine Learning | Erratic / complex patterns |
+| **Chronos-2** | Weighted average | Lightweight baseline |
+
+The system selects the winner **per SKU, per forecast run** — not one model for everything.
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     FastAPI Backend                      │
+│                                                         │
+│  POST /api/forecast                                     │
+│    └─► DemandClassifier   (ADI / CV² diagnosis)        │
+│    └─► ForecastEngine     (6 models × walk-forward)    │
+│    └─► ModelRouter        (WAPE ranking + tie-break)   │
+│    └─► InventoryRecommender (ROP + safety stock)       │
+│                                                         │
+│  POST/GET /api/purchase-order/{...}                     │
+│    └─► PurchaseOrderService  (state machine)           │
+│    └─► SQLite via SQLAlchemy  (persistent ledger)      │
+│                                                         │
+│  POST /api/scenario                                     │
+│    └─► ScenarioEngine     (what-if recalculation)      │
+└─────────────────────────────────────────────────────────┘
+          │ StaticFiles mount
+┌─────────────────────────────────────────────────────────┐
+│                  Vanilla JS Frontend                     │
+│  index.html          Inventory dashboard (12 SKUs)      │
+│  product_detail.html Forecast chart + model card        │
+│  po_confirmation.html PO create / receive / cancel      │
+└─────────────────────────────────────────────────────────┘
+          │
+┌─────────────────────────────────────────────────────────┐
+│  SQLite  stock_management.db                            │
+│  ├── purchase_orders  (PO ledger)                       │
+│  └── model_cache      (pickled fitted models + WAPE)    │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology | Why |
+|---|---|---|
+| Backend API | Python 3.11, FastAPI | Fast async API, auto OpenAPI docs |
+| Database | SQLite + SQLAlchemy ORM | Zero-config persistent storage |
+| Forecasting | statsmodels, LightGBM | Industry-standard time series + ML |
+| Data | Pandas, NumPy, Faker | M5-like synthetic data with realistic constraints |
+| Frontend | Vanilla HTML/CSS/JS, Chart.js | No build step, runs anywhere |
+
+---
+
+## 📁 Project Structure
 
 ```
 timeseries_stock_forecasting/
 │
-├── README.md
-├── .gitignore
+├── stock-management/
+│   ├── backend/
+│   │   ├── main.py                    # FastAPI app entry point
+│   │   ├── exceptions.py              # Domain exceptions (PONotFound etc.)
+│   │   ├── api/                       # HTTP routers (thin layer — no business logic)
+│   │   ├── db/                        # SQLAlchemy models, session, init
+│   │   └── services/                  # All business logic (no FastAPI imports)
+│   │       ├── demand_classifier.py
+│   │       ├── forecast_engine.py     # 6 models + walk-forward backtest
+│   │       ├── model_router.py        # WAPE ranking + tie-break + explanation
+│   │       ├── inventory_recommender.py
+│   │       ├── purchase_order_service.py
+│   │       └── scenario_engine.py
+│   ├── frontend/                      # Vanilla HTML/CSS/JS
+│   └── data/
+│       └── demo_inventory.csv         # M5-like synthetic data (30 SKUs × 365 days)
 │
-└── stock-management/
-    ├── requirements.txt
-    ├── backend/
-    │   ├── main.py                    # FastAPI entry point + lifespan
-    │   ├── exceptions.py              # Domain exceptions (PONotFound, etc.)
-    │   ├── api/
-    │   │   ├── forecast_router.py     #   POST /api/forecast
-    │   │   ├── purchase_order_router.py #  PO CRUD endpoints
-    │   │   └── scenario_router.py     #   POST /api/scenario
-    │   ├── db/
-    │   │   ├── database.py            #   SQLAlchemy engine & session
-    │   │   ├── init_db.py             #   create_all() on startup
-    │   │   └── models.py              #   PurchaseOrder, ModelCache ORM
-    │   ├── services/
-    │   │   ├── demand_classifier.py   #   ADI / CV² demand diagnosis
-    │   │   ├── forecast_engine.py     #   6 models + walk-forward backtest
-    │   │   ├── model_router.py        #   WAPE ranking + tie-break routing
-    │   │   ├── inventory_recommender.py # Reorder logic & safety stock
-    │   │   ├── purchase_order_service.py # PO state machine
-    │   │   └── scenario_engine.py     #   What-if scenario math
-    │   └── data/
-    │       └── demo_inventory.csv     #   M5-like synthetic dataset (30 SKUs)
-    ├── frontend/
-    │   ├── index.html                 # Inventory dashboard
-    │   ├── product_detail.html        # SKU deep-dive & forecast panel
-    │   ├── po_confirmation.html       # Purchase order confirmation
-    │   └── js/
-    │       ├── inventory_table.js
-    │       ├── forecast_card.js
-    │       └── po_modal.js
-    ├── scripts/
-    │   ├── m5_pipeline.py             # Regenerate demo_inventory.csv
-    │   └── generate_demo_data.py
-    └── tests/
-        └── test_helpers.py
+├── scripts/
+│   └── m5_pipeline.py                 # Regenerate training data
+├── tests/
+│   └── test_helpers.py
+└── README.md
 ```
 
 ---
 
 ## 🚀 Quick Start
 
-### Step 1 — Clone the repository
+### Prerequisites
+- Python 3.11 (the `.venv` is configured for 3.11 — do **not** use 3.12+)
+
+### Step 1 — Clone
 
 ```bash
 git clone https://github.com/La0310/timeseries_stock_forecasting.git
@@ -72,32 +153,25 @@ git clone https://github.com/La0310/timeseries_stock_forecasting.git
 
 ### Step 2 — Navigate to the app folder
 
-> ⚠️ **Important:** The app lives inside `stock-management/`, not the repo root.
-> The folder name has a space, so use quotes when using the command line.
+> ⚠️ The app lives inside `stock-management/`, not the repo root. The folder path has spaces — use quotes.
 
-**Windows Command Prompt:**
 ```cmd
 cd "C:\Users\ADMIN\Desktop\Stock prediction project\stock-management"
 ```
 
-**Windows PowerShell:**
-```powershell
-cd "C:\Users\ADMIN\Desktop\Stock prediction project\stock-management"
-```
-
-**If you cloned fresh from GitHub** (no spaces in path):
+Or if you cloned fresh (no spaces):
 ```bash
 cd timeseries_stock_forecasting/stock-management
 ```
 
-### Step 3 — Create and activate a virtual environment
+### Step 3 — Create & activate a virtual environment
 
 ```cmd
 python -m venv .venv
 .venv\Scripts\activate
 ```
 
-> After activation your prompt will show `(.venv)` at the start.
+> Your prompt will show `(.venv)` when active.
 
 ### Step 4 — Install dependencies
 
@@ -111,63 +185,67 @@ pip install -r requirements.txt
 uvicorn backend.main:app --reload
 ```
 
-> **Must be run from inside the `stock-management/` folder.**
-> If you run it from the wrong folder you will see:
-> `ModuleNotFoundError: No module named 'backend'`
-> — fix: `cd` into `stock-management/` first, then run uvicorn.
+> **Must be run from inside `stock-management/`.** If you see `ModuleNotFoundError: No module named 'backend'`, you are in the wrong folder.
 
 ### Step 6 — Open the app
 
-Go to **http://127.0.0.1:8000** in your browser.
+- **Dashboard:** http://127.0.0.1:8000
+- **API docs:** http://127.0.0.1:8000/docs
+
+> First load takes ~1–2 minutes — the system is fitting and backtesting 6 models per SKU. Results are cached in SQLite; subsequent loads are instant.
 
 ---
 
-## ⚠️ Common Errors & Fixes
+## ⚠️ Common Errors
 
 | Error | Cause | Fix |
 |---|---|---|
-| `ModuleNotFoundError: No module named 'backend'` | Running uvicorn from the wrong folder | `cd` into `stock-management/` first |
-| `The system cannot find the path specified` | Path has spaces, no quotes used | Wrap the path in `"double quotes"` |
-| `Address already in use` | A previous server is still running | Close the old terminal or use `--port 8001` |
-| `No module named 'lightgbm'` | Dependencies not installed | Run `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'backend'` | Wrong working directory | `cd` into `stock-management/` first |
+| `No module named 'pydantic_core._pydantic_core'` | `.pyd` binary built for wrong Python version | `pip install --force-reinstall pydantic-core pydantic` |
+| `Unable to import required dependency numpy` | Same binary mismatch | `pip install --force-reinstall numpy pandas scipy scikit-learn lightgbm` |
+| `The system cannot find the path specified` | Path has spaces, no quotes | Wrap path in `"double quotes"` |
+| `Address already in use` | Old server still running | Close the old terminal, or use `--port 8001` |
 
 ---
 
-## 📡 API Endpoints
+## 📡 API Reference
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/forecast` | Full demand → model routing → forecast → replenishment pipeline |
-| `POST` | `/api/purchase-order` | Create a new PO |
-| `GET`  | `/api/purchase-orders?sku_id=` | List all POs for a SKU |
-| `GET`  | `/api/purchase-order/{po_id}` | Get a single PO |
-| `POST` | `/api/purchase-order/{po_id}/receive` | Receive full or partial stock |
+|---|---|---|
+| `POST` | `/api/forecast` | Full pipeline: demand diagnosis → model selection → 28-day forecast → replenishment |
+| `POST` | `/api/purchase-order` | Create a new purchase order |
+| `GET` | `/api/purchase-orders?sku_id=` | List all POs for a SKU |
+| `GET` | `/api/purchase-order/{po_id}` | Get a single PO |
+| `POST` | `/api/purchase-order/{po_id}/receive` | Record full or partial stock receipt |
 | `POST` | `/api/purchase-order/{po_id}/cancel` | Cancel an open PO |
 | `POST` | `/api/scenario` | Run a what-if scenario |
 
-Interactive API docs: **http://127.0.0.1:8000/docs**
+Full interactive docs: **http://127.0.0.1:8000/docs**
 
 ---
 
-## 🛠️ Tech Stack
+## 📊 Training Data
 
-| Layer | Technology |
-|-------|-----------|
-| **Backend** | Python 3.12, FastAPI, Uvicorn |
-| **Database** | SQLite + SQLAlchemy ORM |
-| **ML Models** | LightGBM, statsmodels (SARIMAX, ETS), custom (TSB, SBA) |
-| **Data** | Pandas, NumPy, Faker (M5-like synthetic data) |
-| **Frontend** | Vanilla HTML / CSS / JavaScript, Chart.js |
+The system uses **M5-like synthetic data** generated by `scripts/m5_pipeline.py`:
 
----
+- **30 SKUs** × **365 days** of daily sales history
+- 5 demand archetypes: Smooth (Beverage), Intermittent (Office), Erratic (Hardware), Lumpy (MRO), Seasonal
+- Non-demand fields (lead time, pack size, price, supplier) generated by **Faker** following real business constraints
 
-## 🔁 Regenerate Demo Data
-
-If you want to regenerate `demo_inventory.csv` from scratch:
-
+To regenerate:
 ```cmd
-cd "C:\Users\ADMIN\Desktop\Stock prediction project\stock-management"
 python scripts/m5_pipeline.py
 ```
 
-This creates 30 SKUs × 365 days of M5-like synthetic demand data.
+---
+
+## 🔑 Design Decisions
+
+| Decision | Rationale |
+|---|---|
+| Module functions, not a service class | No shared state — a class was just a namespace wrapper |
+| `db.flush()` before formatting PO ID | Gets the DB-assigned `AUTOINCREMENT` id atomically — eliminates `COUNT(*)+1` race condition |
+| SQL `SUM()` for on_order_stock | One query, always consistent — never stale from in-memory accumulation |
+| `threading.Lock` around LightGBM | LightGBM's C library is not thread-safe on Windows; concurrent calls cause access violations |
+| Domain exceptions, not `HTTPException` in services | Keeps the service HTTP-agnostic — usable from CLI, tests, or background jobs |
+| Lazy model cache in SQLite | Avoids re-fitting on every API call; cache invalidated by history hash (md5) |
